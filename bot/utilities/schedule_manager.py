@@ -53,7 +53,7 @@ class ScheduleManager:
 
         await client.send_message(
             chat_id=chat_id,
-            text="Files hasbeen deleted",
+            text="⏳ Time’s up! files have been deleted.",
         )
 
     async def schedule_delete(

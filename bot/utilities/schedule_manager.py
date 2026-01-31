@@ -50,13 +50,10 @@ class ScheduleManager:
         for i in chunked_ids:
             await client.delete_messages(chat_id=chat_id, message_ids=i)
 
-        link = f"https://t.me/{client.me.username}?start={base64_file_link}"  # type: ignore[reportOptionalMemberAccess]
-        retrieve_files = [[InlineKeyboardButton(text="Deleted File(s)", url=link)]]
 
         await client.send_message(
             chat_id=chat_id,
-            text="Retrieve Deleted File(s)",
-            reply_markup=InlineKeyboardMarkup(retrieve_files),
+            text="Files hasbeen deleted",
         )
 
     async def schedule_delete(

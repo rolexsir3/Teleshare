@@ -1,3 +1,4 @@
+import time  # <-- ADDED
 import uuid
 from inspect import cleandoc
 
@@ -12,7 +13,6 @@ from bot.utilities.pyrofilters import ConvoMessage, PyroFilters
 from bot.utilities.pyrotools import HelpCmd
 
 database = MongoDB()
-
 
 @Client.on_message(
     filters.private & PyroFilters.admin() & filters.command("range_files"),
@@ -71,10 +71,20 @@ async def range_files(client: Client, message: ConvoMessage) -> Message | None:
     file_link = DataEncoder.encode_data(unique_link)
     file_origin = config.BACKUP_CHANNEL
 
-    add_file = await database.add_file(file_link=file_link, file_origin=file_origin, file_data=files_to_store)
+    # <-- ADDED: Calculate expiration time
+    expires_at = None
+    if config.LINK_EXPIRATION_HOURS > 0:
+        expires_at = int(time.time()) + (config.LINK_EXPIRATION_HOURS * 3600)
+
+    add_file = await database.add_file(
+        file_link=file_link,
+        file_origin=file_origin,
+        file_data=files_to_store,
+        expires_at=expires_at,  # <-- ADDED
+    )
 
     if add_file:
-        link = f"https://t.me/{client.me.username}?start={file_link}"  # type: ignore[reportOptionalMemberAccess]
+        link = f"https://t.me/{client.me.username}?start={file_link}"
         reply_markup = InlineKeyboardMarkup(
             [[InlineKeyboardButton("Share URL", url=f"https://t.me/share/url?url={link}")]],
         )
@@ -86,7 +96,6 @@ async def range_files(client: Client, message: ConvoMessage) -> Message | None:
             disable_web_page_preview=True,
         )
     return await message.reply(text="Couldn't add files to database", quote=True)
-
 
 HelpCmd.set_help(
     command="range_files",

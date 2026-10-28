@@ -1,3 +1,4 @@
+import time  # <-- ADDED
 import dns.resolver
 from async_lru import alru_cache
 from motor.motor_asyncio import AsyncIOMotorClient
@@ -7,7 +8,6 @@ from bot.config import config
 
 from .listener import Listener
 from .moderation import Moderation
-
 
 class MongoDB(Moderation, Listener):
     """
@@ -36,12 +36,6 @@ class MongoDB(Moderation, Listener):
     async def add_user(self, user_id: int) -> bool:
         """
         Adds a user to the database.
-
-        Parameters:
-            user_id (int): The ID of the user to add.
-
-        Returns:
-            bool: Whether the user was added successfully.
         """
         collection = self.db["Users"]
         result = await collection.update_one(
@@ -51,27 +45,21 @@ class MongoDB(Moderation, Listener):
         )
         return result.acknowledged
 
-    async def add_file(self, file_link: str, file_origin: int, file_data: list[dict[str, str | int]]) -> bool:
+    async def add_file(self, file_link: str, file_origin: int, file_data: list[dict[str, str | int]], expires_at: int | None = None) -> bool:  # <-- UPDATED
         """
         Adds a file to the database.
-
-        Parameters:
-            file_link (str): The link to the file.
-            file_origin (int): The origin of the file.
-            file_data (list[dict]): The data associated with the file.
-
-        Returns:
-            bool: Whether the file was added successfully.
         """
         collection = self.db["Files"]
+        update_data = {
+            "file_origin": file_origin,
+            "files": file_data,
+        }
+        if expires_at is not None:  # <-- ADDED
+            update_data["expires_at"] = expires_at
+
         result = await collection.update_one(
             filter={"_id": file_link},
-            update={
-                "$set": {
-                    "file_origin": file_origin,
-                    "files": file_data,
-                },
-            },
+            update={"$set": update_data},
             upsert=True,
         )
         return result.acknowledged
@@ -79,12 +67,6 @@ class MongoDB(Moderation, Listener):
     async def delete_link_document(self, base64_file_link: str) -> bool:
         """
         Deletes a link document from the database.
-
-        Parameters:
-            base64_file_link (str): The base64-encoded link to the file.
-
-        Returns:
-            bool: Whether the document was deleted successfully.
         """
         collection = self.db["Files"]
         result = await collection.delete_one(
@@ -94,26 +76,29 @@ class MongoDB(Moderation, Listener):
 
     async def get_link_document(self, base64_file_link: str) -> dict | None:
         """
-        Retrieves a link document from the database.
-
-        Parameters:
-            base64_file_link (str): The base64-encoded link to the file.
-
-        Returns:
-            dict | None: The document associated with the link, or None if not found.
+        Retrieves a link document from the database. Automatically deletes and returns None if expired.
         """
         collection = self.db["Files"]
         pipeline = [{"$match": {"_id": base64_file_link}}]
 
         result = await collection.aggregate(pipeline).to_list(length=None)
-        return result[0] if result else None
+        if not result:
+            return None
+            
+        doc = result[0]
+        expires_at = doc.get("expires_at")
+        
+        # Check if the link has expired
+        if expires_at is not None and int(time.time()) > expires_at:
+            # Lazy deletion: remove the expired link from the database
+            await collection.delete_one({"_id": base64_file_link})
+            return None
+            
+        return doc
 
     async def get_user_ids(self) -> tuple[list[int], list[int]]:
         """
         Retrieves the IDs of all users in the database.
-
-        Returns:
-            tuple[list[int], list[int]]: A tuple containing two lists of user IDs.
         """
         pipeline = [
             {"$project": {"_id": 1}},
@@ -138,9 +123,6 @@ class MongoDB(Moderation, Listener):
     async def stats(self) -> tuple[int, int]:
         """
         Retrieves the number of links and users in the database.
-
-        Returns:
-            tuple[int, int]: A tuple containing the number of links and users.
         """
         link_count = await self.db["Files"].count_documents({})
         users_count = await self.db["Users"].count_documents({})
@@ -149,10 +131,6 @@ class MongoDB(Moderation, Listener):
     async def cleanup_users(self, unsuccessful_ids: list, unsuccessful_ids_codex: list) -> None:
         """
         Cleans up users from the database based on their IDs.
-
-        Parameters:
-            unsuccessful_ids (list): List of user IDs to delete from the database.
-            unsuccessful_ids_codex (list): List of user IDs to delete from the CodeXbotz database.
         """
         if unsuccessful_ids:
             await self.db["Users"].delete_many({"_id": {"$in": unsuccessful_ids}})

@@ -1,4 +1,5 @@
 import asyncio
+import time  # <-- ADDED
 import uuid
 from typing import ClassVar
 
@@ -12,7 +13,6 @@ from bot.options import options
 from bot.utilities.helpers import DataEncoder, RateLimiter
 from bot.utilities.pyrofilters import ConvoMessage, PyroFilters
 from bot.utilities.pyrotools import FileResolverModel
-
 
 class AutoLinkGen:
     database = MongoDB()
@@ -33,10 +33,20 @@ class AutoLinkGen:
         file_origin = config.BACKUP_CHANNEL if options.settings.BACKUP_FILES else message.chat.id
         file_datas = [i.model_dump() for i in file_data]
 
-        add_file = await cls.database.add_file(file_link=file_link, file_origin=file_origin, file_data=file_datas)
+        # <-- ADDED: Calculate expiration time
+        expires_at = None
+        if config.LINK_EXPIRATION_HOURS > 0:
+            expires_at = int(time.time()) + (config.LINK_EXPIRATION_HOURS * 3600)
+
+        add_file = await cls.database.add_file(
+            file_link=file_link,
+            file_origin=file_origin,
+            file_data=file_datas,
+            expires_at=expires_at,  # <-- ADDED
+        )
 
         if add_file:
-            link = f"https://t.me/{client.me.username}?start={file_link}"  # type: ignore[reportOptionalMemberAccess]
+            link = f"https://t.me/{client.me.username}?start={file_link}"
             reply_markup = InlineKeyboardMarkup(
                 [[InlineKeyboardButton("Share URL", url=f"https://t.me/share/url?url={link}")]],
             )
@@ -105,7 +115,6 @@ class AutoLinkGen:
                 resolve_file.message_id = backup_file[0].id if isinstance(backup_file, list) else backup_file.id
 
             await cls.process_files(client=client, message=message, file_data=[resolve_file])
-
 
 @Client.on_message(
     filters.private

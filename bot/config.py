@@ -26,12 +26,10 @@ logger = logging.getLogger(__name__)
 MongoSRVDsn = Annotated[MultiHostUrl, UrlConstraints(allowed_schemes=["mongodb+srv"])]
 BASE_PATH = Path(__file__).parent.parent
 
-
 class ChannelInfo(TypedDict):
     is_private: bool
     invite_link: str
     channel_id: int
-
 
 class Config(BaseSettings):
     """A general configuration setup to read either .env or environment keys."""
@@ -59,6 +57,7 @@ class Config(BaseSettings):
     PROTECT_CONTENT: bool = True
     FORCE_SUB_CHANNELS: list[int] = []
     AUTO_GENERATE_LINK: bool = True
+    LINK_EXPIRATION_HOURS: int = 0  # <-- ADDED: 0 means no expiration
 
     # Injected Config
     channels_n_invite: dict[str, ChannelInfo] = {}
@@ -93,7 +92,6 @@ class Config(BaseSettings):
             DotEnvSettingsSource(settings_cls),
             EnvSettingsSource(settings_cls),
         )
-
 
 try:
     config = Config()  # type: ignore[reportCallIssue]

@@ -1,4 +1,5 @@
 import asyncio
+import time  # <-- ADDED
 import uuid
 from typing import Any, ClassVar, TypedDict
 
@@ -13,13 +14,10 @@ from bot.utilities.helpers import DataEncoder, RateLimiter
 from bot.utilities.pyrofilters import ConvoMessage, PyroFilters
 from bot.utilities.pyrotools import HelpCmd
 
-
 class CacheEntry(TypedDict):
     """Cache entry for files."""
-
     counter: int
     files: list[dict]
-
 
 class MakeFilesCommand:
     """Make files command class."""
@@ -29,50 +27,17 @@ class MakeFilesCommand:
 
     @staticmethod
     @RateLimiter.hybrid_limiter(func_count=1)
-    async def message_reply(client: Client, message: Message, **kwargs: Any) -> Message:  # noqa: ANN401, ARG004
-        """
-        Replies to a message with rate limiter.
-
-        Parameters:
-            client (Client): The client instance.
-            message (Message): The message to reply to.
-            **kwargs (Any): Additional keyword arguments for the reply.
-
-        Returns:
-            Message: The replied message.
-        """
+    async def message_reply(client: Client, message: Message, **kwargs: Any) -> Message:
         return await message.reply(**kwargs)
 
     @classmethod
     async def handle_convo_start(cls, client: Client, message: ConvoMessage) -> Message:
-        """
-        Handle conversation start.
-
-        Parameters:
-            client (Client): The client instance.
-            message (ConvoMessage): The conversation message.
-
-        Returns:
-            Message: The replied message.
-        """
         unique_id = message.chat.id + message.from_user.id
         cls.files_cache.setdefault(unique_id, {"files": [], "counter": 0})
         return await cls.message_reply(client=client, message=message, text="Send your files.", quote=True)
 
     @classmethod
     async def handle_conversation(cls, client: Client, message: ConvoMessage) -> Message | None:
-        """
-        Handle conversations and file uploads. Maintain file cache for optimization.
-        Process burst files, responding only when complete.
-
-
-        Parameters:
-            client (Client): The client instance.
-            message (ConvoMessage): The conversation message.
-
-        Returns:
-            Message or None: The replied message or None if burst is triggered.
-        """
         unique_id = message.chat.id + message.from_user.id
         file_type = message.document or message.video or message.photo or message.audio or message.sticker
         if not file_type:
@@ -110,22 +75,6 @@ class MakeFilesCommand:
 
     @classmethod
     async def handle_convo_stop(cls, client: Client, message: ConvoMessage) -> Message:
-        """
-        Handle the end of conversation.
-
-        This finalizes the conversation by:
-        - Checking if any files were uploaded.
-        - Optionally forwarding files to a backup channel.
-        - Storing file information in a database.
-        - Generating and sending a link to access the files.
-
-        Parameters:
-            client (Client): The client instance.
-            message (ConvoMessage): The conversation message.
-
-        Returns:
-            Message: The replied message.
-        """
         forward_limit_size = 100
         unique_id = message.chat.id + message.from_user.id
         user_cache_chunk = [
@@ -163,7 +112,6 @@ class MakeFilesCommand:
                         },
                     )
         else:
-            # Create a copy of the files cache, excluding the 'file_name' field from each file CacheEntry.
             files_to_store = [
                 {k: v for k, v in i.items() if k != "file_name"} for i in cls.files_cache[unique_id]["files"]
             ]
@@ -172,12 +120,22 @@ class MakeFilesCommand:
         file_link = DataEncoder.encode_data(unique_link)
         file_origin = config.BACKUP_CHANNEL if options.settings.BACKUP_FILES else message.chat.id
 
-        add_file = await cls.database.add_file(file_link=file_link, file_origin=file_origin, file_data=files_to_store)
+        # <-- ADDED: Calculate expiration time
+        expires_at = None
+        if config.LINK_EXPIRATION_HOURS > 0:
+            expires_at = int(time.time()) + (config.LINK_EXPIRATION_HOURS * 3600)
+
+        add_file = await cls.database.add_file(
+            file_link=file_link,
+            file_origin=file_origin,
+            file_data=files_to_store,
+            expires_at=expires_at,  # <-- ADDED
+        )
 
         cls.files_cache.pop(unique_id)
 
         if add_file:
-            link = f"https://t.me/{client.me.username}?start={file_link}"  # type: ignore[reportOptionalMemberAccess]
+            link = f"https://t.me/{client.me.username}?start={file_link}"
             reply_markup = InlineKeyboardMarkup(
                 [[InlineKeyboardButton("Share URL", url=f"https://t.me/share/url?url={link}")]],
             )
@@ -192,7 +150,6 @@ class MakeFilesCommand:
             )
         return await message.reply("Couldn't add files to database")
 
-
 @Client.on_message(
     filters.private
     & PyroFilters.admin(allow_global=True)
@@ -203,12 +160,6 @@ class MakeFilesCommand:
     ),
 )
 async def make_files_command_handler(client: Client, message: ConvoMessage) -> Message | None:
-    """Handles a conversation that receives files to generate an accessable file link.
-
-    **Usage:**
-        /make_files: initiate a conversation then send your files.
-        /make_link: wraps the conversation and generates a link.
-    """
     if message.convo_start:
         return await MakeFilesCommand.handle_convo_start(client=client, message=message)
     if message.conversation:
@@ -216,7 +167,6 @@ async def make_files_command_handler(client: Client, message: ConvoMessage) -> M
     if message.convo_stop:
         return await MakeFilesCommand.handle_convo_stop(client=client, message=message)
     return None
-
 
 HelpCmd.set_help(
     command="make_files",
